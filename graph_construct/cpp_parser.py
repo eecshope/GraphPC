@@ -24,7 +24,7 @@ class Node:
         self.last_read = set()
         self.computed_from = list([])
         
-        if self.father == None:
+        if self.father is None:
             self.assign_idx(0)
 
     def assign_idx(self, idx):
@@ -178,7 +178,7 @@ def simulate_data_flow(node: Node, text: str, table: List):
             for left_node in left_nodes:
                 token = left_node.get_text(text)
                 if node.node.type == "init_declarator":
-                    table[-1][(token, "l")] = {"lr": set([left_node]), "lw": set([left_node])}
+                    table[-1][(token, "l")] = {"lr": {left_node}, "lw": {left_node}}
                 else:
                     declared_var = find_declare_scope(token)
                     if declared_var["lr"] is not None:
