@@ -7,12 +7,14 @@ COMPARE = (">", ">=", "<", "<=", "==")
 
 
 class Node:
-    def __init__(self, node: tree_sitter.Node, father):
+    def __init__(self, node: tree_sitter.Node, father=None):
         self.node = node
         self.father = father
-
+        self.idx = 0
+        
         self.direct_next = list([])
         self.is_leaf = True
+        
         for child in node.children:
             if child.is_named:
                 self.is_leaf = False
@@ -21,7 +23,17 @@ class Node:
         self.last_write = set()
         self.last_read = set()
         self.computed_from = list([])
+        
+        if self.father == None:
+            self.assign_idx(0)
 
+    def assign_idx(self, idx):
+        self.idx = idx
+        last_idx = idx
+        for child in self.direct_next:
+            last_idx = child.assign_idx(last_idx + 1)
+        return last_idx
+        
     def get_text(self, text):
         sp = self.node.start_point[1]
         ep = self.node.end_point[1]
@@ -29,10 +41,10 @@ class Node:
         return expression
 
     def str(self, text):
-        return self.node.type + " " + self.get_text(text)
+        return f"id: {self.idx} " + self.node.type + " " + self.get_text(text)
 
     def traverse(self, depth, text):
-        print("…" * depth + self.node.type + " " + self.get_text(text))
+        print("…" * depth + self.node.type + " " + self.get_text(text) + f" id: {self.idx}")
         for node in self.direct_next:
             node.traverse(depth+1, text)
 
@@ -136,10 +148,13 @@ def simulate_data_flow(node: Node, text: str, table: List):
                     break
             # make sure that it is declared before use
             if _declared_var is None:
-                raise ValueError(f"Identifier {node_token} used before declared with atom {node.str(text)}")
+                # raise ValueError(f"Identifier {node_token} used before declared with atom {node.str(text)}")
+                # It's from the outside
+                table[-1][(node_token, "g")] = {"lw": set(), "lr": set()}
             else:
                 table[-1][(node_token, "g")] = _declared_var
-                return _declared_var
+
+            return table[-1][(node_token, "g")]
 
         # self update, like ++x, x++, will be dealt with separately
         if node.node.type == "init_declarator" or node.node.type == "assignment_expression":
@@ -154,23 +169,24 @@ def simulate_data_flow(node: Node, text: str, table: List):
                 # find declaration
                 declared_var = find_declare_scope(token)
                 if declared_var["lr"] is not None:
-                    right_node.last_read.add(declared_var["lr"])
+                    right_node.last_read |= declared_var["lr"]
                 if declared_var["lw"] is not None:
-                    right_node.last_write.add(declared_var["lw"])
+                    right_node.last_write |= declared_var["lw"]
                 declared_var["lr"] = {right_node}
 
             # deal with the left node
             for left_node in left_nodes:
                 token = left_node.get_text(text)
                 if node.node.type == "init_declarator":
-                    table[-1][(token, "l")] = {"lr": None, "lw": left_node}
+                    table[-1][(token, "l")] = {"lr": set([left_node]), "lw": set([left_node])}
                 else:
                     declared_var = find_declare_scope(token)
                     if declared_var["lr"] is not None:
-                        left_node.last_read.add(declared_var["lr"])
+                        left_node.last_read |= declared_var["lr"]
                     if declared_var["lw"] is not None:
-                        left_node.last_write.add(declared_var["lw"])
+                        left_node.last_write |= declared_var["lw"]
                     declared_var["lw"] = {left_node}
+                    declared_var["lr"] = {left_node}
         else:
             expression = node.get_text(text)
             valid = False
@@ -184,9 +200,9 @@ def simulate_data_flow(node: Node, text: str, table: List):
                     token = terminal.get_text(text)
                     declared_var = find_declare_scope(token)
                     if declared_var["lr"] is not None:
-                        terminal.last_read.add(declared_var["lr"])
+                        terminal.last_read |= declared_var["lr"]
                     if declared_var["lw"] is not None:
-                        terminal.last_write.add(declared_var["lw"])
+                        terminal.last_write |= declared_var["lw"]
                     declared_var["lr"] = {terminal}
 
     else:
