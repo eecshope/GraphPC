@@ -82,7 +82,7 @@ def simulate_data_flow(node: Node, text: str, table: List):
                         father_scope[(var[0], "l")]["lr"] = child_scope[var]["lr"]
                         father_scope[(var[0], "l")]["lw"] = child_scope[var]["lw"]
                 elif var not in father_scope:
-                    father_scope[var] = child_scope[var]
+                    father_scope[var] = {"lr": child_scope[var]["lr"], "lw": child_scope[var]["lw"]}
                 else:
                     if _merge:
                         father_scope[var]["lr"] |= child_scope[var]["lr"]
@@ -118,7 +118,11 @@ def simulate_data_flow(node: Node, text: str, table: List):
         scope_cache = list([])
         for child_node in node.direct_next:
             if child_node.node.type == "condition_clause":
+                table.append(dict({}))
                 simulate_data_flow(child_node, text, table)
+                scope_cache.append(table[-1])
+                merge(table[-2], table[-1])
+                table.pop(-1)
             else:
                 table.append(dict({}))
                 simulate_data_flow(child_node, text, table)
@@ -127,7 +131,7 @@ def simulate_data_flow(node: Node, text: str, table: List):
         for scope in scope_cache:
             merge(table[-1], scope, True)
         if len(table) >= 2:
-            merge(table[-2], table[-1])
+            merge(table[-2], table[-1], True)
             table.pop(-1)
 
     elif node.node.type in ATOM_TYPES:
@@ -152,7 +156,7 @@ def simulate_data_flow(node: Node, text: str, table: List):
                 # It's from the outside
                 table[-1][(node_token, "g")] = {"lw": set(), "lr": set()}
             else:
-                table[-1][(node_token, "g")] = _declared_var
+                table[-1][(node_token, "g")] = {"lw": _declared_var["lw"], "lr": _declared_var["lr"]}
 
             return table[-1][(node_token, "g")]
 
