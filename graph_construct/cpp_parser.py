@@ -239,10 +239,15 @@ def simulate_data_flow(node: Node, text: str, table: List):
             right_nodes = [node for node in node.direct_next[1].get_leaf() if node.node.type == "identifier"]
             left_nodes = [node for node in node.direct_next[0].get_leaf() if node.node.type == "identifier"]
 
+            if node.direct_next[1].node.type == "update_expression":
+                simulate_data_flow(node.direct_next[1], text, table)
+
             # deal with the right node
             for right_node in right_nodes:
+                '''
                 if right_node.node.type == "call_expression":
                     simulate_data_flow(right_node, text, table)
+                '''
                 token = right_node.get_text(text)
                 # find declaration
                 declared_var = find_declare_scope(token)
