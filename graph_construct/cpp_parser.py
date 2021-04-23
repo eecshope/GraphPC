@@ -2,8 +2,8 @@ from typing import List
 
 import tree_sitter
 
-ATOM_TYPES = ("init_declarator", "assignment_expression", "condition_clause", "binary_expression",
-              "return_statement", "call_expression")
+ATOM_TYPES = ("init_declarator", "assignment_expression", "condition_clause", "binary_expression", "return_statement",
+              "call_expression")
 COMPARE = (">", ">=", "<", "<=", "==")
 
 
@@ -12,10 +12,10 @@ class Node:
         self.node = node
         self.father = father
         self.idx = 0
-        
+
         self.direct_next = list([])
         self.is_leaf = True
-        
+
         for child in node.children:
             if child.is_named:
                 self.is_leaf = False
@@ -24,7 +24,7 @@ class Node:
         self.last_write = set()
         self.last_read = set()
         self.computed_from = list([])
-        
+
         if self.father is None:
             self.assign_idx(0)
 
@@ -34,7 +34,7 @@ class Node:
         for child in self.direct_next:
             last_idx = child.assign_idx(last_idx + 1)
         return last_idx
-        
+
     def get_text(self, text):
         sp = self.node.start_point[1]
         ep = self.node.end_point[1]
@@ -47,7 +47,7 @@ class Node:
     def traverse(self, depth, text):
         print("…" * depth + self.node.type + " " + self.get_text(text) + f" id: {self.idx}")
         for node in self.direct_next:
-            node.traverse(depth+1, text)
+            node.traverse(depth + 1, text)
 
     def get_leaf(self):
         if self.is_leaf:
@@ -69,7 +69,6 @@ class Node:
 
 
 def simulate_data_flow(node: Node, text: str, table: List):
-
     def merge(father_scope, child_scope, _merge=False):
         for var in child_scope:  # var: a tuple (name, type)
             if var[1] == "l":  # local declared
@@ -114,13 +113,66 @@ def simulate_data_flow(node: Node, text: str, table: List):
             merge(table[-2], table[-1])
             table.pop(-1)
 
-    elif node.node.type == "while_statement" or node.node.type == "for_statement":
+    elif node.node.type == "for_statement":
         table.append(dict({}))
 
-        for child_node in node.direct_next:
-            simulate_data_flow(child_node, text, table)
-        for child_node in node.direct_next:
-            simulate_data_flow(child_node, text, table)
+        meta = list([])
+
+        for i, c in enumerate(node.node.children):
+            meta.append(c)
+            sp = c.start_point[1]
+            ep = c.end_point[1]
+            if text[sp:ep] == ")":
+                break
+        meta = meta[2:-1]
+
+        loop_start = 0
+        if meta[0].is_named:
+            for_init = None
+            for i in range(loop_start, len(node.direct_next)):
+                if node.direct_next[i].node is meta[0]:
+                    for_init = node.direct_next[i]
+                    loop_start = i + 1
+                    break
+        else:
+            for_init = None
+
+        if meta[1].is_named:
+            for_cond = None
+            incre_idx = 3
+            for i in range(loop_start, len(node.direct_next)):
+                if node.direct_next[i].node is meta[1]:
+                    for_cond = node.direct_next[i]
+                    loop_start = i + 1
+                    break
+        else:
+            for_cond = None
+            incre_idx = 2
+
+        if meta[incre_idx].is_named:
+            for_incre = None
+            for i in range(loop_start, len(node.direct_next)):
+                if node.direct_next[i].node is meta[incre_idx]:
+                    for_incre = node.direct_next[i]
+                    loop_start = i + 1
+                    break
+        else:
+            for_incre = None
+
+        if len(node.direct_next[loop_start:]) == 0:
+            raise RuntimeError(f"For Loop parsed error at {node.str(text)}")
+
+        if for_init is not None:
+            simulate_data_flow(for_init, text, table)
+
+        for i in range(2):
+            if for_cond is not None:
+                simulate_data_flow(for_cond, text, table)
+            for child_node in node.direct_next[loop_start:]:
+                simulate_data_flow(child_node, text, table)
+
+            if for_incre is not None:
+                simulate_data_flow(for_incre, text, table)
 
         if len(table) >= 2:
             merge(table[-2], table[-1])
@@ -224,6 +276,7 @@ def simulate_data_flow(node: Node, text: str, table: List):
                 if declared_var["lw"] is not None:
                     argument.last_write |= declared_var["lw"]
                 declared_var["lr"] = {argument}
+
         else:
             expression = node.get_text(text)
             valid = False
