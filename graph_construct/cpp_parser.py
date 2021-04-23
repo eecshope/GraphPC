@@ -2,7 +2,8 @@ from typing import List
 
 import tree_sitter
 
-ATOM_TYPES = ("init_declarator", "assignment_expression", "condition_clause", "binary_expression")
+ATOM_TYPES = ("init_declarator", "assignment_expression", "condition_clause", "binary_expression",
+              "return_statement", "call_expression")
 COMPARE = (">", ">=", "<", "<=", "==")
 
 
@@ -91,7 +92,19 @@ def simulate_data_flow(node: Node, text: str, table: List):
                         father_scope[var]["lr"] = child_scope[var]["lr"]
                         father_scope[var]["lw"] = child_scope[var]["lw"]
 
-    if node.node.type == "compound_statement":
+    if node.node.type == "function_definition":
+        assert node.direct_next[1].node.type == "function_declarator"
+        function_declarator = node.direct_next[1]
+        assert function_declarator.direct_next[1].node.type == "parameter_list"
+        parameter_list = function_declarator.direct_next[1]
+        table.append({})
+        for p in [n for n in parameter_list.get_leaf() if n.node.type == "identifier"]:
+            table[-1][(p.get_text(text), "l")] = {"lr": {p}, "lw": {p}}
+        assert node.direct_next[2].node.type == "compound_statement"
+        simulate_data_flow(node.direct_next[2], text, table)
+        table.pop(-1)
+
+    elif node.node.type == "compound_statement":
         table.append(dict({}))
 
         for child_node in node.direct_next:
@@ -133,6 +146,13 @@ def simulate_data_flow(node: Node, text: str, table: List):
         if len(table) >= 2:
             merge(table[-2], table[-1], True)
             table.pop(-1)
+
+    elif node.node.type == "declaration":
+        for child in node.direct_next:
+            if child.node.type == "identifier":
+                table[-1][(child.get_text(text), "l")] = {"lr": {child}, "lw": {child}}
+            else:
+                simulate_data_flow(child, text, table)
 
     elif node.node.type in ATOM_TYPES:
 
@@ -191,6 +211,19 @@ def simulate_data_flow(node: Node, text: str, table: List):
                         left_node.last_write |= declared_var["lw"]
                     declared_var["lw"] = {left_node}
                     declared_var["lr"] = {left_node}
+
+        elif node.node.type == "call_expression":
+            assert node.direct_next[1].node.type == "argument_list"
+            argument_list = node.direct_next[1]
+            arguments = [n for n in argument_list.get_leaf() if n.node.type == "identifier"]
+            for argument in arguments:
+                token = argument.get_text(text)
+                declared_var = find_declare_scope(token)
+                if declared_var["lr"] is not None:
+                    argument.last_read |= declared_var["lr"]
+                if declared_var["lw"] is not None:
+                    argument.last_write |= declared_var["lw"]
+                declared_var["lr"] = {argument}
         else:
             expression = node.get_text(text)
             valid = False
@@ -198,7 +231,7 @@ def simulate_data_flow(node: Node, text: str, table: List):
                 if compare in expression:
                     valid = True
                     break
-            if valid:
+            if valid or node.node.type == 'return_statement':
                 terminals = [t_node for t_node in node.get_leaf() if t_node.node.type == "identifier"]
                 for terminal in terminals:
                     token = terminal.get_text(text)
