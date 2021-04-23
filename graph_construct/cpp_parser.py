@@ -285,9 +285,9 @@ def simulate_data_flow(node: Node, text: str, table: List):
                 token = identifier.get_text(text)
                 declared_var = find_declare_scope(token)
                 if declared_var["lr"] is not None:
-                    identifier.last_read |= {declared_var["lr"], identifier}
+                    identifier.last_read |= (declared_var["lr"] | {identifier})
                 if declared_var["lw"] is not None:
-                    identifier.last_write |= {declared_var["lw"], identifier}
+                    identifier.last_write |= (declared_var["lw"] | {identifier})
                 declared_var["lr"] = {identifier}
                 declared_var["lw"] = {identifier}
         else:
