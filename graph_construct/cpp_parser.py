@@ -114,80 +114,13 @@ def simulate_data_flow(node: Node, text: str, table: List):
             merge(table[-2], table[-1])
             table.pop(-1)
 
-    elif node.node.type == "while_statement":
+    elif node.node.type == "while_statement" or node.node.type == "for_statement":
         table.append(dict({}))
-        
+
         for child_node in node.direct_next:
             simulate_data_flow(child_node, text, table)
         for child_node in node.direct_next:
             simulate_data_flow(child_node, text, table)
-
-        if len(table) >= 2:
-            merge(table[-2], table[-1])
-            table.pop(-1)
-
-    elif node.node.type == "for_statement":
-        table.append(dict({}))
-        
-        meta = list([])
-        
-        for i, c in enumerate(node.node.children):
-            meta.append(c)
-            sp = c.start_point[1]
-            ep = c.end_point[1]
-            if text[sp:ep] == ")":
-                break
-        meta = meta[2:-1]
-        
-
-        loop_start = 0
-        if meta[0].is_named:
-            for_init = None
-            for i in range(loop_start, len(node.direct_next)):
-                if node.direct_next[i].node is meta[0]:
-                    for_init = node.direct_next[i]
-                    loop_start = i + 1
-                    break
-        else:
-            for_init = None
-
-        if meta[1].is_named:
-            for_cond = None
-            incre_idx = 3
-            for i in range(loop_start, len(node.direct_next)):
-                if node.direct_next[i].node is meta[1]:
-                    for_cond = node.direct_next[i]
-                    loop_start = i + 1
-                    break
-        else:
-            for_cond = None
-            incre_idx = 2
-
-        if meta[incre_idx].is_named:
-            for_incre = None
-            for i in range(loop_start, len(node.direct_next)):
-                if node.direct_next[i].node is meta[incre_idx]:
-                    for_incre = node.direct_next[i]
-                    loop_start = i + 1
-                    break
-        else:
-            for_incre = None
-            
-        if len(node.direct_next[loop_start:]) == 0:
-            raise RuntimeError(f"For Loop parsed error at {node.str(text)}")
-            
-        if for_init is not None:
-            simulate_data_flow(for_init, text, table)
-            
-        for i in range(2):
-            if for_cond is not None:
-                simulate_data_flow(for_cond, text, table)
-            for child_node in node.direct_next[loop_start:]:
-                simulate_data_flow(child_node, text, table)
-            
-            if for_incre is not None:
-                simulate_data_flow(for_incre, text, table)
-            
 
         if len(table) >= 2:
             merge(table[-2], table[-1])
