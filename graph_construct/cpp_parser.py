@@ -3,7 +3,7 @@ from typing import List
 import tree_sitter
 
 ATOM_TYPES = ("init_declarator", "assignment_expression", "condition_clause", "binary_expression", "return_statement",
-              "call_expression")
+              "call_expression", "update_expression")
 COMPARE = (">", ">=", "<", "<=", "==")
 
 
@@ -241,6 +241,8 @@ def simulate_data_flow(node: Node, text: str, table: List):
 
             # deal with the right node
             for right_node in right_nodes:
+                if right_node.node.type == "call_expression":
+                    simulate_data_flow(right_node, text, table)
                 token = right_node.get_text(text)
                 # find declaration
                 declared_var = find_declare_scope(token)
@@ -277,6 +279,17 @@ def simulate_data_flow(node: Node, text: str, table: List):
                     argument.last_write |= declared_var["lw"]
                 declared_var["lr"] = {argument}
 
+        elif node.node.type == "update_expression":
+            identifiers = [n for n in node.get_leaf() if n.node.type == "identifier"]
+            for identifier in identifiers:
+                token = identifier.get_text(text)
+                declared_var = find_declare_scope(token)
+                if declared_var["lr"] is not None:
+                    identifier.last_read |= {declared_var["lr"], identifier}
+                if declared_var["lw"] is not None:
+                    identifier.last_write |= {declared_var["lw"], identifier}
+                declared_var["lr"] = {identifier}
+                declared_var["lw"] = {identifier}
         else:
             expression = node.get_text(text)
             valid = False
