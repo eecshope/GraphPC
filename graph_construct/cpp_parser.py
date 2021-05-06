@@ -24,6 +24,8 @@ class Node:
         self.last_write = set()
         self.last_read = set()
         self.computed_from = list([])
+        self.return_stmt = list([])
+        self.method_implementation = None
 
         if self.father is None:
             self.assign_idx(0)
@@ -57,6 +59,17 @@ class Node:
             for child in self.direct_next:
                 leaves += child.get_leaf()
             return leaves
+
+    def get_ret_stmt(self):
+        if self.node.type == "return_statement":
+            return self.get_leaf()
+        elif not self.is_leaf:
+            ret_stmt = list([])
+            for child in self.direct_next:
+                ret_stmt += child.get_ret_stmt()
+            return ret_stmt
+        else:
+            return list([])
 
     def get_computed_from(self):
         if self.node.type == "init_declarator" or self.node.type == "assignment_expression":
@@ -93,11 +106,17 @@ def simulate_data_flow(node: Node, text: str, table: List):
 
     if node.node.type == "function_definition":
         assert node.direct_next[1].node.type == "function_declarator"
+
+        function_name = node.direct_next[1].direct_next[0]
+        assert function_name.node.type == "identifier"
+        function_name.return_stmt = function_name.get_ret_stmt()
+
         function_declarator = node.direct_next[1]
         assert function_declarator.direct_next[1].node.type == "parameter_list"
         parameter_list = function_declarator.direct_next[1]
         table.append({})
         for p in [n for n in parameter_list.get_leaf() if n.node.type == "identifier"]:
+            function_name.computed_from.append(p)
             table[-1][(p.get_text(text), "l")] = {"lr": {p}, "lw": {p}}
         assert node.direct_next[2].node.type == "compound_statement"
         simulate_data_flow(node.direct_next[2], text, table)
@@ -316,3 +335,35 @@ def simulate_data_flow(node: Node, text: str, table: List):
     else:
         for child_node in node.direct_next:
             simulate_data_flow(child_node, text, table)
+
+
+def parse_function_call(root: Node, text: str):
+    local_function = dict({})
+
+    def find_local_function(node: Node):
+        if node.node.type == "function_definition":
+            function_declarator = node.direct_next[1]
+            assert function_declarator.node.type == "function_declarator"
+            function_identifier = function_declarator.direct_next[0]
+            assert function_identifier.node.type == "identifier"
+            local_function[function_identifier.get_text(text)] = function_identifier
+        else:
+            for child in node.direct_next:
+                find_local_function(child)
+
+    find_local_function(root)
+
+    def find_call_expr(node: Node):
+        if node.node.type == "call_expression":
+            func_name = node.direct_next[0]
+            assert func_name.node.type == "identifier"
+            func_name_text = func_name.get_text(text)
+            if func_name_text not in local_function:
+                print(f"function {func_name_text} is not found in local source")
+            else:
+                func_name.method_implementation = local_function[func_name_text]
+        elif not node.is_leaf:
+            for child in node.direct_next:
+                find_call_expr(child)
+
+    find_call_expr(root)
