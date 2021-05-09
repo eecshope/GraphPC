@@ -1,6 +1,8 @@
-from typing import List
+from typing import List, Dict
 
 import tree_sitter
+import dgl
+import torch
 
 ATOM_TYPES = ("init_declarator", "assignment_expression", "condition_clause", "binary_expression", "return_statement",
               "call_expression", "update_expression")
@@ -367,3 +369,51 @@ def parse_function_call(root: Node, text: str):
                 find_call_expr(child)
 
     find_call_expr(root)
+
+
+def convert_ast_to_dgl(root: tree_sitter.Node, code: str, vocab: Dict):
+    root = Node(root)
+    named_nodes = list([])
+
+    def extract_nodes(node):
+        named_nodes.append(node)
+        for child in node.direct_next:
+            extract_nodes(child)
+
+    extract_nodes(root)
+    n_named_nodes = len(named_nodes)
+    assert max([node.idx for node in named_nodes]) == n_named_nodes - 1
+
+    local_dict = dict({})
+    u = list([])
+    v = list([])
+    
+    def build_dgl(node, non_name_node_idx):
+        local_dict[node.idx] = node.get_text(code)
+        if not node.is_leaf:
+            for child in node.node.children:
+                if not child.is_named:
+                    u.append(node.idx)
+                    v.append(non_name_node_idx)
+                    local_dict[non_name_node_idx] = code[child.start_point: child.end_point]
+                    non_name_node_idx += 1
+
+            for child in node.direct_next:
+                u.append(node.idx)
+                v.append(child.idx)
+                non_name_node_idx = build_dgl(child, non_name_node_idx)
+
+        return non_name_node_idx
+
+    build_dgl(root, n_named_nodes)
+
+    u = torch.tensor(u)
+    v = torch.tensor(v)
+    for key in local_dict:
+        if key not in vocab:
+            local_dict[key] = vocab[key]
+        else:
+            local_dict[key] = len(vocab) + 1
+
+    graph = dgl.graph((u, v), idtype=torch.int32)
+    return graph, local_dict
