@@ -387,21 +387,24 @@ def convert_ast_to_dgl(root: tree_sitter.Node, code: str, vocab: Dict):
     local_dict = dict({})
     u = list([])
     v = list([])
-    
+  
     def build_dgl(node, non_name_node_idx):
-        local_dict[node.idx] = node.get_text(code)
-        if not node.is_leaf:
-            for child in node.node.children:
-                if not child.is_named:
-                    u.append(node.idx)
-                    v.append(non_name_node_idx)
-                    local_dict[non_name_node_idx] = code[child.start_point: child.end_point]
-                    non_name_node_idx += 1
-
-            for child in node.direct_next:
+        if len(node.node.children) == 0:
+            local_dict[node.idx] = node.get_text(code)
+        else:
+            local_dict[node.idx] = node.node.type
+            
+        for child in node.node.children:
+            if not child.is_named:
                 u.append(node.idx)
-                v.append(child.idx)
-                non_name_node_idx = build_dgl(child, non_name_node_idx)
+                v.append(non_name_node_idx)
+                local_dict[non_name_node_idx] = code[child.start_point[1]: child.end_point[1]]
+                non_name_node_idx += 1
+
+        for child in node.direct_next:
+            u.append(node.idx)
+            v.append(child.idx)
+            non_name_node_idx = build_dgl(child, non_name_node_idx)
 
         return non_name_node_idx
 
@@ -410,9 +413,10 @@ def convert_ast_to_dgl(root: tree_sitter.Node, code: str, vocab: Dict):
     u = torch.tensor(u)
     v = torch.tensor(v)
     for key in local_dict:
-        if key not in vocab:
-            local_dict[key] = vocab[key]
+        if local_dict[key] in vocab:
+            local_dict[key] = vocab[local_dict[key]]
         else:
+            print(local_dict[key] + " is oov")
             local_dict[key] = len(vocab) + 1
 
     graph = dgl.graph((u, v), idtype=torch.int32)
