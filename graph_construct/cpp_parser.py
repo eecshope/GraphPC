@@ -389,6 +389,7 @@ def convert_ast_to_dgl(root: tree_sitter.Node, code: str, vocab: Dict):
     v = list([])
   
     def build_dgl(node, non_name_node_idx):
+        # the 'leaf nodes' here indicates the leaf in CST rather in AST
         if len(node.node.children) == 0:
             local_dict[node.idx] = node.get_text(code)
         else:
