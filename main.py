@@ -7,10 +7,15 @@ from dgl.dataloading import GraphDataLoader
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("data_dir", default="ProgramData")
-    parser.add_argument("root_dir", default="saved", help="Root Directory for Logs and Models")
-    parser.add_argument("task", help="The task for the call, either 'train' or 'test' ")
-    parser.add_argument("save_path", default=None, help="Path of the archived model weights")
+    parser.add_argument("--data_dir", default="ProgramData")
+    parser.add_argument("--root_dir", default="saved", help="Root Directory for Logs and Models")
+    parser.add_argument("--task", help="The task for the call, either 'train' or 'test' ")
+    parser.add_argument("--save_path", default=None, help="Path of the archived model weights")
+
+    parser.add_argument("--vocab_size", default=7961, help="size of the vocabulary")
+    parser.add_argument("--n_features", default=256, help="dimension of the features")
+    parser.add_argument("--n_classes", default=10, help="number of classes")
+    parser.add_argument("--n_layers", default=5, help="number of stacked layers")
     args = parser.parse_args()
 
     if args.task not in ["train", "test"]:
@@ -25,7 +30,7 @@ def main():
         print(f"Loading model from checkpoint {args.save_path}")
         model.load_from_checkpoint(args.save_path)
 
-    print(f"Loading Data...from {args.data_dir}")
+    print(f"Loading {args.task} data from {args.data_dir}...")
     if args.task == "test":
         test_dataset = ASTDataset("test", save_dir=args.data_dir)
     else:
