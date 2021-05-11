@@ -413,6 +413,12 @@ def convert_ast_to_dgl(root: tree_sitter.Node, code: str, vocab: Dict):
 
     u = torch.tensor(u)
     v = torch.tensor(v)
+    pos_edge_type = torch.zeros_like(u, dtype=torch.int32)
+    uu = torch.cat([u, v], dim=0)
+    vv = torch.cat([v, u], dim=0)
+    neg_edge_type = torch.ones_like(u, dtype=torch.int32)
+    edge_type = torch.cat([pos_edge_type, neg_edge_type], dim=0)
+
     for key in local_dict:
         if local_dict[key] in vocab:
             local_dict[key] = vocab[local_dict[key]]
@@ -420,5 +426,14 @@ def convert_ast_to_dgl(root: tree_sitter.Node, code: str, vocab: Dict):
             print(local_dict[key] + " is oov")
             local_dict[key] = len(vocab) + 1
 
-    graph = dgl.graph((u, v), idtype=torch.int32)
+    graph = dgl.graph((uu, vv), idtype=torch.int32)
+    graph.edata["type"] = edge_type
+
+    n_nodes = graph.num_nodes()
+    assert n_nodes == len(local_dict)
+    node_idx = torch.zeros([n_nodes], dtype=torch.int32)
+    for key, value in local_dict.items():
+        node_idx[key] = value
+    graph.ndata['idx'] = node_idx
+
     return graph, local_dict

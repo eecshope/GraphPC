@@ -1,14 +1,15 @@
-import dgl
 import torch
 import pytorch_lightning
 
 from torch import nn
 from torch.optim import Adam
-from dgl.nn.pytorch.conv import GraphConv
+from dgl.nn.pytorch.conv import GatedGraphConv
+from dgl.nn.pytorch import GlobalAttentionPooling
 from torch.nn.functional import cross_entropy
 from utils.metrics import ACC, AverageMetric
 
 
+"""
 class ConvRelu(nn.Module):
     def __init__(self, in_feature, out_feature):
         super(ConvRelu, self).__init__()
@@ -21,6 +22,7 @@ class ConvRelu(nn.Module):
         h = self.conv(graph, feature)
         f = self.relu(h)
         return graph, f
+"""
 
 
 class SimpleClassifier(pytorch_lightning.LightningModule):
@@ -33,8 +35,12 @@ class SimpleClassifier(pytorch_lightning.LightningModule):
 
         # allocate the tensors
         self.embed = nn.Embedding(vocab_size, n_features)
-        self.backbone = nn.ModuleList([ConvRelu(n_features, n_features) for _ in range(n_layers)])
-        self.final_project = GraphConv(n_features, n_classes)
+#        self.backbone = nn.ModuleList([ConvRelu(n_features, n_features) for _ in range(n_layers)])
+#        self.final_project = GraphConv(n_features, n_classes)
+        self.backbone = GatedGraphConv(n_features, n_features, n_layers, 2)
+        pooling_gate_nn = nn.Linear(n_features, 1)
+        self.pooling = GlobalAttentionPooling(pooling_gate_nn)
+        self.linear_cls = nn.Linear(n_features, n_classes)
 
         # metrics
         self.acc = ACC()
@@ -43,13 +49,12 @@ class SimpleClassifier(pytorch_lightning.LightningModule):
     def forward(self, graph):
         node_idx = graph.ndata["idx"].long()
         word_emb = self.embed(node_idx)
-        h = word_emb
+        edge_type = graph.edata["type"]
 
-        for module in self.backbone:
-            graph, h = module(graph, h)
+        h = self.backbone(graph, word_emb, edge_type)
+        logits = self.linear_cls(self.pooling(h))
 
-        graph.ndata["h"] = h
-        return dgl.mean_nodes(graph, "h")
+        return logits
 
     def training_step(self, batch, batch_idx):
         graphs, labels = batch
@@ -78,4 +83,4 @@ class SimpleClassifier(pytorch_lightning.LightningModule):
         self.log("test_acc", self.acc)
 
     def configure_optimizers(self):
-        return Adam(self.parameters())
+        return Adam(self.parameters(), lr=1e-5)
