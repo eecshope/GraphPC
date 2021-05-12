@@ -19,7 +19,8 @@ class ACC(Metric):
         logits = logits.detach().reshape((-1, n_vocab))  # [-1, vocab]
         target = target.detach().reshape((-1))  # [-1]
         preds = torch.argmax(logits, -1)  # [-1]
-        hits = torch.mul(torch.eq(target, preds), torch.ne(target, 0)).sum()
+        # hits = torch.mul(torch.eq(target, preds), torch.ne(target, 0)).sum()
+        hits = torch.sum(torch.eq(target, preds))
 
         return hits
 
@@ -30,6 +31,7 @@ class ACC(Metric):
 
     def compute(self):
         return self.acc / self.total
+
 
 class AverageMetric(Metric):
     def __init__(self):

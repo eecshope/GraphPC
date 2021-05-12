@@ -423,7 +423,7 @@ def convert_ast_to_dgl(root: tree_sitter.Node, code: str, vocab: Dict):
         if local_dict[key] in vocab:
             local_dict[key] = vocab[local_dict[key]]
         else:
-            print(local_dict[key] + " is oov")
+            # print(local_dict[key] + " is oov")
             local_dict[key] = len(vocab) + 1
 
     graph = dgl.graph((uu, vv), idtype=torch.int32)

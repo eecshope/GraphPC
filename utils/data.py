@@ -7,7 +7,7 @@ from dgl.data.utils import load_graphs
 
 class ASTDataset(DGLDataset):
     def __getitem__(self, idx):
-        return self.graphs[idx], self.label_dict["label"][idx] - 1  # because the labels start from 1
+        return self.graphs[idx], self.label_dict["label"][idx]  # because the labels start from 1
 
     def __len__(self):
         return len(self.graphs)
