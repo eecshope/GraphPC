@@ -30,8 +30,16 @@ class Node:
             if child.type != "comment" and child.type != "preproc_arg":
                 if child.type == "if_statement":
                     self.children.append(IfStatement(node, father))
+                elif child.type == "for_statement":
+                    self.children.append(ForStatement(node, father))
+                elif child.type == "while_statement":
+                    self.children.append(WhileStatement(node, father))
+                elif child.type == "do_statement":
+                    self.children.append(DoStatement(node, father))
+                elif child.type == "function_definition":
+                    self.children.append(FuncDefinition(node, father))
                 else:
-                    self.children.append(Node(child, self))
+                    self.children.append(NormalNode(child, self))
                 if child.is_named:
                     self.is_named_leaf = False
                     self.named_children.append(self.children[-1])
