@@ -7,6 +7,7 @@ from dgl.nn.pytorch.conv import GatedGraphConv
 from dgl.nn.pytorch import GlobalAttentionPooling
 from torch.nn.functional import cross_entropy
 from utils.metrics import ACC, AverageMetric
+from graph_construct import cpp_parser_
 
 
 class SimpleClassifier(pytorch_lightning.LightningModule):
@@ -19,7 +20,7 @@ class SimpleClassifier(pytorch_lightning.LightningModule):
 
         # allocate the tensors
         self.embed = nn.Embedding(vocab_size, n_features)
-        self.backbone = GatedGraphConv(n_features, n_features, n_layers, 2)
+        self.backbone = GatedGraphConv(n_features, n_features, n_layers, cpp_parser_.EDGE_KIND * 2)
         pooling_gate_nn = nn.Linear(n_features, 1)
         self.pooling = GlobalAttentionPooling(pooling_gate_nn)
         self.linear_cls = nn.Linear(n_features, n_classes)
