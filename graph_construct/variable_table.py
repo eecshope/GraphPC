@@ -28,7 +28,8 @@ class VariableTable:
             unit = self.father.find_reference(token)
             if unit is not None:  # be sure to deep copy the elements
                 self.outer_variables[token] = {"lr": set([]) | unit["lr"], "lw": set([]) | unit["lw"]}
-            return self.outer_variables[token]
+                unit = self.outer_variables[token]
+            return unit
 
     def add_reference(self, token):
         self.local_variables[token] = {"lr": set([]), "lw": set([])}
@@ -58,8 +59,13 @@ class VariableTable:
         self.father.child = None
         for token in self.outer_variables:
             if token in self.father.local_variables:
-                self.father.local_variables[token] |= self.outer_variables[token]
+                self.father.local_variables[token]["lr"] |= self.outer_variables[token]["lr"]
+                self.father.local_variables[token]["lw"] |= self.outer_variables[token]["lw"]
             elif token in self.father.outer_variables:
-                self.father.outer_variables[token] |= self.outer_variables[token]
+                self.father.outer_variables[token]["lr"] |= self.outer_variables[token]["lr"]
+                self.father.outer_variables[token]["lw"] |= self.outer_variables[token]["lw"]
             else:
                 raise ValueError(f"Outer variable {token} is not found in outer tables")
+
+    def __str__(self):
+        return f" local: {str(self.local_variables)}\n global: {str(self.outer_variables)}"

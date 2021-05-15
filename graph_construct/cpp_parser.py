@@ -1,7 +1,8 @@
 from typing import List
-from variable_table import VariableTable
+from .variable_table import VariableTable
 import tree_sitter
 import abc
+import traceback
 
 ATOM_TYPES = ("init_declarator", "assignment_expression", "condition_clause", "binary_expression", "return_statement",
               "call_expression", "update_expression", "declaration")
@@ -100,93 +101,100 @@ class NormalNode(Node):
     def __init__(self, node: tree_sitter.Node, code: List, father=None):
         super(NormalNode, self).__init__(node=node, code=code, father=father)
 
-    def simulate_data_flow(self, variable_table: VariableTable):
-        if self.type not in ATOM_TYPES:
-            for child in self.named_children:
-                child.simulate_data_flow(variable_table)
-
-        elif self.type == "declaration":
-            for child in self.named_children:
-                if child.type == "init_declaration":
+    def simulate_data_flow(self, variable_table: VariableTable, table_verbose=False):
+        try:
+            if self.type not in ATOM_TYPES:
+                for child in self.named_children:
                     child.simulate_data_flow(variable_table)
-                elif child.type == "identifier":
-                    unit = variable_table.add_reference(child.token)
-                    unit["lr"].add(child)
-                    unit["lw"].add(child)
 
-        elif self.type == "init_declarator":
-            from_variables = [e for e in self.children[0].get_named_leaf() if e.type == "identifier"]
-            to_variables = [e for e in self.children[2].get_named_leaf() if e.type == "identifier"]
+            elif self.type == "declaration":
+                for child in self.named_children:
+                    if child.type == "init_declarator":
+                        child.simulate_data_flow(variable_table)
+                    elif child.type == "identifier":
+                        unit = variable_table.add_reference(child.token)
+                        unit["lr"].add(child)
+                        unit["lw"].add(child)
 
-            for variable in from_variables:
-                unit = variable_table.add_reference(variable.token)
-                unit["lw"].add(variable)
+            elif self.type == "init_declarator":
+                from_variables = [e for e in self.children[0].get_named_leaf() if e.type == "identifier"]
+                to_variables = [e for e in self.children[2].get_named_leaf() if e.type == "identifier"]
 
-            for variable in to_variables:
-                unit = variable_table.find_reference(variable.token)
-                variable.last_read |= unit["lr"]
-                variable.last_write |= unit["lw"]
-                unit["lr"] = {variable}
+                for variable in from_variables:
+                    unit = variable_table.add_reference(variable.token)
+                    unit["lw"].add(variable)
 
-        elif self.type == "assignment_expression":
-            # proc right
-            left_variables = [e for e in self.children[0].get_named_leaf() if e.type == "identifier"]
-            right_variables = [e for e in self.children[2].get_named_leaf() if e.type == "identifier"]
+                for variable in to_variables:
+                    unit = variable_table.find_reference(variable.token)
+                    variable.last_read |= unit["lr"]
+                    variable.last_write |= unit["lw"]
+                    unit["lr"] = {variable}
 
-            self.children[2].simulate_data_flow(variable_table)  # i = ++i; is undefined and it is not allowed
+            elif self.type == "assignment_expression":
+                # proc right
+                left_variables = [e for e in self.children[0].get_named_leaf() if e.type == "identifier"]
+                right_variables = [e for e in self.children[2].get_named_leaf() if e.type == "identifier"]
 
-            for variable in left_variables:
-                unit = variable_table.find_reference(variable.token)
-                variable.last_read |= unit["lr"]
-                variable.last_write |= unit["lw"]
-                unit["lw"] = {variable}
+                self.children[2].simulate_data_flow(variable_table)  # i = ++i; is undefined and it is not allowed
 
-            for variable in right_variables:
-                unit = variable_table.find_reference(variable.token)
-                variable.last_read |= unit["lr"]
-                variable.last_write |= unit["lw"]
-                unit["lr"] = {variable}
+                for variable in left_variables:
+                    unit = variable_table.find_reference(variable.token)
+                    variable.last_read |= unit["lr"]
+                    variable.last_write |= unit["lw"]
+                    unit["lw"] = {variable}
 
-        elif self.type == "update_expression":
-            if self.children[0].node == self.node.child_by_field_name("operator"):
-                variable = self.children[1].get_named_leaf()
+                for variable in right_variables:
+                    unit = variable_table.find_reference(variable.token)
+                    variable.last_read |= unit["lr"]
+                    variable.last_write |= unit["lw"]
+                    unit["lr"] = {variable}
+
+            elif self.type == "update_expression":
+                if self.children[0].node == self.node.child_by_field_name("operator"):
+                    variable = self.children[1].get_named_leaf()
+                else:
+                    variable = self.children[0].get_named_leaf()
+
+                unit = variable_table.find_reference(variable[0].token)
+                variable[0].last_read |= unit["lr"]
+                variable[0].last_read.add(variable[0])
+                variable[0].last_write |= unit["lw"]
+                variable[0].last_write.add(variable[0])
+                unit["lr"] = {variable[0]}
+                unit["lw"] = {variable[0]}
+
+            elif self.type == "call_expression":
+                arguments = self.node.child_by_field_name("arguments")
+                find_argument = False
+                for named_child in self.named_children:
+                    if named_child.node == arguments:
+                        arguments = named_child
+                        find_argument = True
+
+                if not find_argument:
+                    raise ValueError(f"{self.token} has no arguments")
+
+                variables = [e for e in arguments.get_named_leaf() if e.type == "identifier"]
+                for v in variables:
+                    unit = variable_table.find_reference(v.token)
+                    v.last_write |= unit["lw"]
+                    v.last_read |= unit["lr"]
+                    unit["lr"] = {v}
+
             else:
-                variable = self.children[0].get_named_leaf()
+                leaves = [e for e in self.get_named_leaf() if e.type == "identifier"]
+                for leaf in leaves:
+                    unit = variable_table.find_reference(leaf.token)
+                    leaf.last_read |= unit["lr"]
+                    leaf.last_write |= unit["lw"]
+                    unit["lr"] = {leaf}
 
-            unit = variable_table.find_reference(variable[0].token)
-            variable[0].last_read |= unit["lr"]
-            variable[0].last_read.add(variable[0])
-            variable[0].last_write |= unit["lw"]
-            variable[0].last_write.add(variable[0])
-            unit["lr"] = {variable[0]}
-            unit["lw"] = {variable[0]}
+        except Exception as e:
+            print(f"Error: Node {self.idx, self.token}")
+            print(variable_table)
+            traceback.print_exc()
 
-        elif self.type == "call_expression":
-            arguments = self.node.child_by_field_name("arguments")
-            find_argument = False
-            for named_child in self.named_children:
-                if named_child.node == arguments:
-                    arguments = named_child
-                    find_argument = True
-
-            if not find_argument:
-                raise ValueError(f"{self.token} has no arguments")
-
-            variables = arguments.get_named_leaf()
-            for v in variables:
-                unit = variable_table.find_reference(v.token)
-                v.last_write |= unit["lw"]
-                v.last_read |= unit["lr"]
-                unit["lr"] = {v}
-
-        else:
-            leaves = [e for e in self.get_named_leaf() if e.type == "identifier"]
-            for leaf in leaves:
-                unit = variable_table.find_reference(leaf.token)
-                leaf.last_read |= unit["lr"]
-                leaf.last_write |= unit["lw"]
-                unit["lr"] = {leaf}
-                unit["lw"] = {leaf}
+        # print(f"idx: {self.idx}, table: {variable_table}")
 
 
 class CompoundStatement(Node):
@@ -276,7 +284,7 @@ class ForStatement(Node):
                 if child.node == update:
                     self.update = child
                     break
-            self.update: None
+            self.update: Node
 
         self.loop_body = self.children[-1]
 
@@ -290,6 +298,9 @@ class ForStatement(Node):
             self.condition.simulate_data_flow(for_table)
 
         self.loop_body.simulate_data_flow(for_table)
+
+        if self.update is not None:
+            self.update = self.update.simulate_data_flow(for_table)
 
         if self.condition is not None:
             self.condition.simulate_data_flow(for_table)
@@ -367,7 +378,7 @@ class FuncDefinition(Node):
             else:
                 for child in self.declarator.children:
                     if child.node == parameter_list:
-                        self.parameter_list = parameter_list
+                        self.parameter_list = child
 
         body = node.child_by_field_name("body")
         self.body = None
