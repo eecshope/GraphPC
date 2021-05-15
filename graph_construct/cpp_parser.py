@@ -5,7 +5,8 @@ import abc
 import traceback
 
 ATOM_TYPES = ("init_declarator", "assignment_expression", "condition_clause", "binary_expression", "return_statement",
-              "call_expression", "update_expression", "declaration")
+              "call_expression", "update_expression", "declaration", "array_declarator", "parameter_declaration",
+              "subscript_expression", "identifier")
 COMPARE = (">", ">=", "<", "<=", "==")
 
 DIRECT_LINK = 0
@@ -13,6 +14,25 @@ LAST_READ = 1
 LAST_WRITE = 2
 COMPUTED_FROM = 3
 EDGE_KIND = 4
+
+
+def special_array(node, vt):
+    _name = node.named_children[0]
+    _index = node.named_children[1]
+
+    if _index.type == "identifier":
+        _index_unit = vt.find_reference(_index.token)
+        _index.last_write |= _index_unit["lw"]
+        _index.last_read |= _index_unit["lr"]
+        _index_unit["lr"] = {_index}
+    else:
+        _index.simulate_data_flow(vt)
+
+    if _name.type == "identifier":
+        _name_unit = vt.add_reference(_name.token)
+        _name_unit["lw"] = {_name}
+    else:
+        special_array(_name, vt)
 
 
 class Node:
@@ -109,7 +129,7 @@ class NormalNode(Node):
 
             elif self.type == "declaration":
                 for child in self.named_children:
-                    if child.type == "init_declarator":
+                    if "_declarator" in child.type:
                         child.simulate_data_flow(variable_table)
                     elif child.type == "identifier":
                         unit = variable_table.add_reference(child.token)
@@ -123,6 +143,7 @@ class NormalNode(Node):
                 for variable in from_variables:
                     unit = variable_table.add_reference(variable.token)
                     unit["lw"].add(variable)
+                    unit["lr"].add(variable)
 
                 for variable in to_variables:
                     unit = variable_table.find_reference(variable.token)
@@ -130,24 +151,43 @@ class NormalNode(Node):
                     variable.last_write |= unit["lw"]
                     unit["lr"] = {variable}
 
+            elif self.type == "array_declarator":
+                array_name = self.children[0].get_named_leaf()[0]
+                assert array_name.node.type == "identifier"
+                unit = variable_table.add_reference(array_name.token)
+                unit["lw"].add(array_name)
+                unit["lr"].add(array_name)
+
+            elif self.type == "parameter_declaration":
+                identifiers = [e for e in self.get_named_leaf() if e.type == "identifier"]
+                for idf in identifiers:
+                    unit = variable_table.add_reference(idf)
+                    unit["lw"].add(idf)
+                    unit["lr"].add(idf)
+
             elif self.type == "assignment_expression":
                 # proc right
-                left_variables = [e for e in self.children[0].get_named_leaf() if e.type == "identifier"]
+                # left_variables = [e for e in self.children[0].get_named_leaf() if e.type == "identifier"]
                 right_variables = [e for e in self.children[2].get_named_leaf() if e.type == "identifier"]
 
                 self.children[2].simulate_data_flow(variable_table)  # i = ++i; is undefined and it is not allowed
 
-                for variable in left_variables:
-                    unit = variable_table.find_reference(variable.token)
-                    variable.last_read |= unit["lr"]
-                    variable.last_write |= unit["lw"]
-                    unit["lw"] = {variable}
-
-                for variable in right_variables:
+                for variable in right_variables:  # right first
                     unit = variable_table.find_reference(variable.token)
                     variable.last_read |= unit["lr"]
                     variable.last_write |= unit["lw"]
                     unit["lr"] = {variable}
+
+                variable = self.children[0]
+                if variable.type == "identifier":
+                    unit = variable_table.find_reference(variable.token)
+                    variable.last_read |= unit["lr"]
+                    variable.last_write |= unit["lw"]
+                    unit["lw"] = {variable}
+                elif variable.type == "subscript_expression":
+                    special_array(variable, variable_table)
+                else:
+                    raise ValueError(f"{variable.type} not implemented for assignment_expression {self.token}")
 
             elif self.type == "update_expression":
                 if self.children[0].node == self.node.child_by_field_name("operator"):
@@ -162,6 +202,20 @@ class NormalNode(Node):
                 variable[0].last_write.add(variable[0])
                 unit["lr"] = {variable[0]}
                 unit["lw"] = {variable[0]}
+
+            elif self.type == "binary_expression":
+                left = self.children[0]
+                right = self.children[2]
+                expressions = [left, right]
+
+                for expression in expressions:
+                    if expression.type == "identifier":
+                        unit = variable_table.find_reference(expression.token)
+                        expression.last_read |= unit["lr"]
+                        expression.last_write |= unit["lw"]
+                        unit["lr"] = {expression}
+                    else:
+                        expression.simulate_data_flow(variable_table)
 
             elif self.type == "call_expression":
                 arguments = self.node.child_by_field_name("arguments")
@@ -181,6 +235,37 @@ class NormalNode(Node):
                     v.last_read |= unit["lr"]
                     unit["lr"] = {v}
 
+            elif self.type == "condition_clause":
+                for named_child in self.named_children:
+                    if named_child.type == "identifier":
+                        unit = variable_table.find_reference(named_child.token)
+                        named_child.last_write |= unit["lw"]
+                        named_child.last_read |= unit["lr"]
+                        unit["lr"] = {named_child}
+                    else:
+                        named_child.simulate_data_flow(variable_table)
+
+            elif self.type == "subscript_expression":
+                name = self.named_children[0]
+                index = self.named_children[1]
+
+                if index.type == "identifier":
+                    index_unit = variable_table.find_reference(index.token)
+                    index.last_write |= index_unit["lw"]
+                    index.last_read |= index_unit["lr"]
+                    index_unit["lr"] = {index}
+                else:
+                    index.simulate_data_flow(variable_table)
+
+                if name.type == "identifier":
+                    name_unit = variable_table.find_reference(name.token)
+                    name.last_write |= name_unit["lw"]
+                    name.last_read |= name_unit["lr"]
+                    name_unit["lw"] = {name}
+                    name_unit["lr"] = {name}
+                else:
+                    name.simulate_data_flow(variable_table)
+
             else:
                 leaves = [e for e in self.get_named_leaf() if e.type == "identifier"]
                 for leaf in leaves:
@@ -190,6 +275,7 @@ class NormalNode(Node):
                     unit["lr"] = {leaf}
 
         except Exception as e:
+            print(e)
             print(f"Error: Node {self.idx, self.token}")
             print(variable_table)
             traceback.print_exc()
