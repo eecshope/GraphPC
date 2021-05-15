@@ -161,6 +161,24 @@ class NormalNode(Node):
             unit["lr"] = {variable[0]}
             unit["lw"] = {variable[0]}
 
+        elif self.type == "call_expression":
+            arguments = self.node.child_by_field_name("arguments")
+            find_argument = False
+            for named_child in self.named_children:
+                if named_child.node == arguments:
+                    arguments = named_child
+                    find_argument = True
+
+            if not find_argument:
+                raise ValueError(f"{self.token} has no arguments")
+
+            variables = arguments.get_named_leaf()
+            for v in variables:
+                unit = variable_table.find_reference(v.token)
+                v.last_write |= unit["lw"]
+                v.last_read |= unit["lr"]
+                unit["lr"] = {v}
+
         else:
             leaves = [e for e in self.get_named_leaf() if e.type == "identifier"]
             for leaf in leaves:
