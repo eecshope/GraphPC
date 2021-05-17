@@ -22,27 +22,6 @@ COMPUTED_FROM = 3
 EDGE_KIND = 4
 
 
-def special_array(node, vt):
-    _name = node.named_children[0]
-    _index = node.named_children[1]
-
-    if _index.type == "identifier":
-        _index_unit = vt.find_reference(_index.token)
-        _index.last_write |= _index_unit["lw"]
-        _index.last_read |= _index_unit["lr"]
-        _index_unit["lr"] = {_index}
-    else:
-        _index.simulate_data_flow(vt)
-
-    if _name.type == "identifier":
-        _name_unit = vt.find_reference(_name.token)
-        _name.last_write |= _name_unit["lw"]
-        _name.last_read |= _name_unit["lr"]
-        _name_unit["lw"] = {_name}
-    else:
-        special_array(_name, vt)
-
-
 class Node:
     def __init__(self, node: tree_sitter.Node, code: List, father=None):
         self.node = node
@@ -247,7 +226,7 @@ class NormalNode(Node):
                 self.children[1].simulate_data_flow(variable_table, "r")
 
             elif self.type == "condition_clause":  # Done
-                if len(self.named_children) == 2: # init, value
+                if len(self.named_children) == 2:  # init, value
                     init = self.named_children[0]
                     if init.type == "declarator":
                         init.simulate_data_flow(variable_table=variable_table, mode="d")
@@ -508,7 +487,6 @@ class FuncDefinition(Node):
         parameters = self.parameter_list.get_named_leaf()
         for parameter in parameters:
             if parameter.type == "identifier":
-                token = parameter.token
                 unit = func_table.add_reference(parameter.token, parameter)
                 unit["lr"].add(parameter)
                 unit["lw"].add(parameter)
