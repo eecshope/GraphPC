@@ -1,3 +1,7 @@
+SPECIAL_TOKENS = ("cin", "cout", "endl")
+UPDATE_MODE = {"ro", "wo", "rw"}  # read-only, write-only, read-and-write
+
+
 class VariableTable:
     """
     There's one thing to be mention that all of the variables references follow the lazy strategy, which means only
@@ -31,15 +35,45 @@ class VariableTable:
                 unit = self.outer_variables[token]
             return unit
 
-    def add_reference(self, token):
-        self.local_variables[token] = {"lr": set([]), "lw": set([])}
+    def add_reference(self, token, node):
+        assert token == node.token
+        if token in SPECIAL_TOKENS:
+            return 1
+        self.local_variables[token] = {"lr": {node}, "lw": {node}}
         return self.local_variables[token]
 
+    def find_and_update(self, token: str, node, mode: str):
+        assert token == node.token
+        if node.token in SPECIAL_TOKENS:
+            return 1
+
+        unit = self.find_reference(token)
+        if unit is None:
+            raise ValueError(f"{token} not found")
+
+        if mode not in UPDATE_MODE:
+            raise ValueError(f"{mode} is not an available update mode")
+
+        node.last_read |= unit["lr"]
+        node.last_write |= unit["lw"]
+
+        if mode == "ro":
+            unit["lr"] = {node}
+        elif mode == "wo":
+            unit["lw"] = {node}
+        else:
+            unit["lr"] = {node}
+            unit["lw"] = {node}
+
+        return 0
+
+    """
     def find_or_add_reference(self, token):
         unit = self.find_reference(token)
         if unit is None:
             unit = self.add_reference(token)
         return unit
+    """
 
     def add_variable_table(self):
         self.child = VariableTable(self)

@@ -2,12 +2,18 @@ from typing import List
 from .variable_table import VariableTable
 import tree_sitter
 import abc
-import traceback
 
-ATOM_TYPES = ("init_declarator", "assignment_expression", "condition_clause", "binary_expression", "return_statement",
-              "call_expression", "update_expression", "declaration", "array_declarator", "parameter_declaration",
-              "subscript_expression", "identifier")
+ATOM_TYPES = ("init_declarator", "array_declarator", "parameter_declaration", "function_declarator",
+              "expression_statement", "pointer_declarator",  "declaration", "condition_declaration",
+              "return_statement", "condition_clause", "argument_list", "parameter_list", "initializer_list",
+              "initializer_pair", "translation_unit",
+              "comma_expression", "assignment_expression", "binary_expression", "call_expression", "update_expression",
+              "subscript_expression", "conditional_expression", "identifier")
+
+
 COMPARE = (">", ">=", "<", "<=", "==")
+
+MODE = ("r", "w", "d", "o")
 
 DIRECT_LINK = 0
 LAST_READ = 1
@@ -29,7 +35,9 @@ def special_array(node, vt):
         _index.simulate_data_flow(vt)
 
     if _name.type == "identifier":
-        _name_unit = vt.add_reference(_name.token)
+        _name_unit = vt.find_reference(_name.token)
+        _name.last_write |= _name_unit["lw"]
+        _name.last_read |= _name_unit["lr"]
         _name_unit["lw"] = {_name}
     else:
         special_array(_name, vt)
@@ -113,7 +121,7 @@ class Node:
             return leaves
 
     @abc.abstractmethod
-    def simulate_data_flow(self, variable_table: VariableTable):
+    def simulate_data_flow(self, variable_table: VariableTable, mode):
         pass
 
 
@@ -121,75 +129,103 @@ class NormalNode(Node):
     def __init__(self, node: tree_sitter.Node, code: List, father=None):
         super(NormalNode, self).__init__(node=node, code=code, father=father)
 
-    def simulate_data_flow(self, variable_table: VariableTable, table_verbose=False):
+    def simulate_data_flow(self, variable_table: VariableTable, mode, table_verbose=False):
+        if mode not in MODE:
+            raise ValueError(f"mode '{mode}' is not available for data flow simulation")
         try:
             if self.type not in ATOM_TYPES:
                 for child in self.named_children:
-                    child.simulate_data_flow(variable_table)
+                    child.simulate_data_flow(variable_table, mode)
 
-            elif self.type == "declaration":
+            elif self.type == "translation_unit":
                 for child in self.named_children:
-                    if "_declarator" in child.type:
-                        child.simulate_data_flow(variable_table)
-                    elif child.type == "identifier":
-                        unit = variable_table.add_reference(child.token)
-                        unit["lr"].add(child)
-                        unit["lw"].add(child)
+                    child.simulate_data_flow(variable_table, "o")  # "d" is the default status
 
-            elif self.type == "init_declarator":
-                from_variables = [e for e in self.children[0].get_named_leaf() if e.type == "identifier"]
-                to_variables = [e for e in self.children[2].get_named_leaf() if e.type == "identifier"]
+            elif self.type == "declaration":  # Done
+                for child in self.named_children:
+                    child.simulate_data_flow(variable_table, "d")
 
-                for variable in from_variables:
-                    unit = variable_table.add_reference(variable.token)
-                    unit["lw"].add(variable)
-                    unit["lr"].add(variable)
+            elif self.type == "pointer_declarator":  # Done
+                declarator = self.children[-1]
+                declarator.simulate_data_flow(variable_table=variable_table, mode="d")
 
-                for variable in to_variables:
-                    unit = variable_table.find_reference(variable.token)
-                    variable.last_read |= unit["lr"]
-                    variable.last_write |= unit["lw"]
-                    unit["lr"] = {variable}
+            elif self.type == "init_declarator":  # Done
+                self.named_children[0].simulate_data_flow(variable_table=variable_table, mode="d")
+                self.named_children[1].simulate_data_flow(variable_table=variable_table, mode="r")
 
-            elif self.type == "array_declarator":
-                array_name = self.children[0].get_named_leaf()[0]
-                assert array_name.node.type == "identifier"
-                unit = variable_table.add_reference(array_name.token)
-                unit["lw"].add(array_name)
-                unit["lr"].add(array_name)
+            elif self.type == "array_declarator":  # Done
+                self.named_children[0].simulate_data_flow(variable_table=variable_table, mode="d")
 
-            elif self.type == "parameter_declaration":
-                identifiers = [e for e in self.get_named_leaf() if e.type == "identifier"]
-                for idf in identifiers:
-                    unit = variable_table.add_reference(idf)
-                    unit["lw"].add(idf)
-                    unit["lr"].add(idf)
+            elif self.type == "parameter_declaration":  # done
+                for named_child in self.named_children:
+                    if "_declarator" in named_child.type:
+                        named_child.simulate_data_flow(variable_table, "d")
 
-            elif self.type == "assignment_expression":
+            elif self.type == "function_declarator":  # Done
+                self.children[1].simulate_data_flow(variable_table=variable_table, mode="d")
+
+            elif self.type == "condition_declaration":
+                self.named_children[1].simulate_data_flow(variable_table=variable_table, mode="d")
+                for child in self.named_children[2:]:
+                    child.simulate_data_flow(variable_table=variable_table, mode="r")
+
+            elif self.type == "argument_list":  # Done
+                for named_child in self.named_children:
+                    named_child.simulate_data_flow(variable_table, mode)
+
+            elif self.type == "parameter_list":  # Done
+                for named_child in self.named_children:
+                    named_child.simulate_data_flow(variable_table, "d")
+
+            elif self.type == "initializer_list":  # Done
+                for named_child in self.named_children:
+                    named_child.simulate_data_flow(variable_table, "r")
+
+            elif self.type == "initializer_pair":  # Done
+                self.named_children[0].simulate_data_flow(variable_table, mode)
+                self.named_children[1].simulate_data_flow(variable_table, "r")
+
+            elif self.type == "expression_statement":  # Done
+                if mode == "o":
+                    declare_expression = ("identifier", "subscript_expression", "comma_expression")  # comma may error
+                    for expression in self.named_children:
+                        if expression.type in declare_expression:
+                            expression.simulate_data_flow(variable_table, "d")
+                        else:
+                            expression.simulate_data_flow(variable_table, "r")
+                elif mode == "r":
+                    for expression in self.named_children:
+                        expression.simulate_data_flow(variable_table, "r")
+                else:
+                    raise ValueError(f"Expression statement encounter mode {mode}")
+
+            elif self.type == "comma_expression":  # Done
+                if mode == "r":
+                    for expression in self.named_children:
+                        expression.simulate_data_flow(variable_table, "r")
+
+                elif mode == "o":
+                    declare_expression = ("identifier", "subscript_expression", "comma_expression")
+                    for expression in self.named_children:
+                        if expression.type in declare_expression:
+                            expression.simulate_data_flow(variable_table, "d")
+                        else:
+                            expression.simulate_data_flow(variable_table, "r")
+                else:
+                    raise ValueError(f"Comma expression encounter mode {mode}")
+
+            elif self.type == "assignment_expression":  # Done
                 # proc right
-                # left_variables = [e for e in self.children[0].get_named_leaf() if e.type == "identifier"]
-                right_variables = [e for e in self.children[2].get_named_leaf() if e.type == "identifier"]
-
-                self.children[2].simulate_data_flow(variable_table)  # i = ++i; is undefined and it is not allowed
-
-                for variable in right_variables:  # right first
-                    unit = variable_table.find_reference(variable.token)
-                    variable.last_read |= unit["lr"]
-                    variable.last_write |= unit["lw"]
-                    unit["lr"] = {variable}
+                self.children[2].simulate_data_flow(variable_table, "r")  # i = ++i; is undefined and it is not allowed
 
                 variable = self.children[0]
-                if variable.type == "identifier":
-                    unit = variable_table.find_reference(variable.token)
-                    variable.last_read |= unit["lr"]
-                    variable.last_write |= unit["lw"]
-                    unit["lw"] = {variable}
-                elif variable.type == "subscript_expression":
-                    special_array(variable, variable_table)
+                support_expression = ("identifier", "subscript_expression", "pointer_expression")
+                if variable.type in support_expression:
+                    variable.simulate_data_flow(variable_table, "w")
                 else:
                     raise ValueError(f"{variable.type} not implemented for assignment_expression {self.token}")
 
-            elif self.type == "update_expression":
+            elif self.type == "update_expression":  # done
                 if self.children[0].node == self.node.child_by_field_name("operator"):
                     variable = self.children[1].get_named_leaf()
                 else:
@@ -203,82 +239,74 @@ class NormalNode(Node):
                 unit["lr"] = {variable[0]}
                 unit["lw"] = {variable[0]}
 
-            elif self.type == "binary_expression":
-                left = self.children[0]
-                right = self.children[2]
-                expressions = [left, right]
+            elif self.type == "binary_expression":  # Done
+                self.children[0].simulate_data_flow(variable_table, "r")
+                self.children[2].simulate_data_flow(variable_table, "r")
 
-                for expression in expressions:
-                    if expression.type == "identifier":
-                        unit = variable_table.find_reference(expression.token)
-                        expression.last_read |= unit["lr"]
-                        expression.last_write |= unit["lw"]
-                        unit["lr"] = {expression}
+            elif self.type == "call_expression":  # Done
+                self.children[1].simulate_data_flow(variable_table, "r")
+
+            elif self.type == "condition_clause":  # Done
+                if len(self.named_children) == 2: # init, value
+                    init = self.named_children[0]
+                    if init.type == "declarator":
+                        init.simulate_data_flow(variable_table=variable_table, mode="d")
                     else:
-                        expression.simulate_data_flow(variable_table)
+                        init.simulate_data_flow(variable_table=variable_table, mode="r")
+                    value = self.named_children[1]
+                    value.simulate_data_flow(variable_table=variable_table, mode="r")
+                else:
+                    value = self.named_children[0]  # conditional declaration
+                    value.simulate_data_flow(variable_table=variable_table, mode="d")
 
-            elif self.type == "call_expression":
-                arguments = self.node.child_by_field_name("arguments")
-                find_argument = False
-                for named_child in self.named_children:
-                    if named_child.node == arguments:
-                        arguments = named_child
-                        find_argument = True
-
-                if not find_argument:
-                    raise ValueError(f"{self.token} has no arguments")
-
-                variables = [e for e in arguments.get_named_leaf() if e.type == "identifier"]
-                for v in variables:
-                    unit = variable_table.find_reference(v.token)
-                    v.last_write |= unit["lw"]
-                    v.last_read |= unit["lr"]
-                    unit["lr"] = {v}
-
-            elif self.type == "condition_clause":
-                for named_child in self.named_children:
-                    if named_child.type == "identifier":
-                        unit = variable_table.find_reference(named_child.token)
-                        named_child.last_write |= unit["lw"]
-                        named_child.last_read |= unit["lr"]
-                        unit["lr"] = {named_child}
-                    else:
-                        named_child.simulate_data_flow(variable_table)
-
-            elif self.type == "subscript_expression":
+            elif self.type == "subscript_expression":  # Done
                 name = self.named_children[0]
                 index = self.named_children[1]
 
-                if index.type == "identifier":
-                    index_unit = variable_table.find_reference(index.token)
-                    index.last_write |= index_unit["lw"]
-                    index.last_read |= index_unit["lr"]
-                    index_unit["lr"] = {index}
-                else:
-                    index.simulate_data_flow(variable_table)
+                index.simulate_data_flow(variable_table, "r")
 
-                if name.type == "identifier":
-                    name_unit = variable_table.find_reference(name.token)
-                    name.last_write |= name_unit["lw"]
-                    name.last_read |= name_unit["lr"]
-                    name_unit["lw"] = {name}
-                    name_unit["lr"] = {name}
+                if mode == "r":
+                    name.simulate_data_flow(variable_table, "r")
+                elif mode == "w":
+                    name.simulate_data_flow(variable_table, "w")
                 else:
-                    name.simulate_data_flow(variable_table)
+                    raise ValueError(f"Subscript expression {self.token} does not support declaration")
 
-            else:
-                leaves = [e for e in self.get_named_leaf() if e.type == "identifier"]
-                for leaf in leaves:
-                    unit = variable_table.find_reference(leaf.token)
-                    leaf.last_read |= unit["lr"]
-                    leaf.last_write |= unit["lw"]
-                    unit["lr"] = {leaf}
+            elif self.type == "conditional_expression":  # a ? b : c
+                condition = self.children[0]
+                consequence = self.children[2]
+                alternative = self.children[4]
+
+                if_table = variable_table.add_variable_table()
+                condition.simulate_data_flow(if_table, "r")
+
+                consequence_table = VariableTable(if_table)
+                consequence.simulate_data_flow(consequence_table, "r")
+
+                alternative_table = VariableTable(if_table)
+                alternative.simulate_data_flow(alternative_table, "r")
+
+                if_table.child = consequence_table
+                consequence_table.merge_and_pop_self()
+                if_table.child = alternative_table
+                alternative_table.add_variable_table()
+                if_table.pop_self()
+
+            elif self.type == "identifier":
+                if mode == "r":
+                    variable_table.find_and_update(self.token, self, "ro")
+                elif mode == "w":
+                    variable_table.find_and_update(self.token, self, "wo")
+                elif mode == "d":
+                    variable_table.add_reference(self.token, self)
+                else:
+                    raise ValueError(f"Something Wrong {mode}")
 
         except Exception as e:
             print(e)
             print(f"Error: Node {self.idx, self.token}")
             print(variable_table)
-            traceback.print_exc()
+            raise ValueError("Parse Failed")
 
         # print(f"idx: {self.idx}, table: {variable_table}")
 
@@ -287,10 +315,10 @@ class CompoundStatement(Node):
     def __init__(self, node: tree_sitter.Node, code: List, father=None):
         super(CompoundStatement, self).__init__(node=node, code=code, father=father)
 
-    def simulate_data_flow(self, variable_table: VariableTable):
+    def simulate_data_flow(self, variable_table: VariableTable, mode):
         variable_table = variable_table.add_variable_table()
         for named_child in self.named_children:
-            named_child.simulate_data_flow(variable_table=variable_table)
+            named_child.simulate_data_flow(variable_table=variable_table, mode=mode)
         variable_table.pop_self()
 
 
@@ -324,14 +352,14 @@ class IfStatement(Node):
                 self.branches.append(self.children[ptr])
             ptr += 1
 
-    def simulate_data_flow(self, variable_table: VariableTable):
+    def simulate_data_flow(self, variable_table: VariableTable, mode):
         if_table = variable_table.add_variable_table()
-        self.condition_clause.simulate_data_flow(if_table)
+        self.condition_clause.simulate_data_flow(if_table, mode=mode)
 
         branch_tables = list([])
         for branch in self.branches:
             branch_table = VariableTable(if_table)
-            branch.simulate_data_flow(branch_table)
+            branch.simulate_data_flow(branch_table, mode=mode)
             branch_tables.append(branch_table)
 
         for branch_table in branch_tables:
@@ -374,24 +402,24 @@ class ForStatement(Node):
 
         self.loop_body = self.children[-1]
 
-    def simulate_data_flow(self, variable_table: VariableTable):
+    def simulate_data_flow(self, variable_table: VariableTable, mode):
         for_table = variable_table.add_variable_table()
 
         if self.initializer is not None:
-            self.initializer.simulate_data_flow(for_table)
+            self.initializer.simulate_data_flow(for_table, mode=mode)
 
         if self.condition is not None:
-            self.condition.simulate_data_flow(for_table)
+            self.condition.simulate_data_flow(for_table, mode=mode)
 
-        self.loop_body.simulate_data_flow(for_table)
+        self.loop_body.simulate_data_flow(for_table, mode=mode)
 
         if self.update is not None:
-            self.update = self.update.simulate_data_flow(for_table)
+            self.update = self.update.simulate_data_flow(for_table, mode=mode)
 
         if self.condition is not None:
-            self.condition.simulate_data_flow(for_table)
+            self.condition.simulate_data_flow(for_table, mode=mode)
 
-        self.loop_body.simulate_data_flow(for_table)
+        self.loop_body.simulate_data_flow(for_table, mode=mode)
 
         for_table.pop_self()
 
@@ -404,13 +432,13 @@ class WhileStatement(Node):
         assert self.node.child_by_field_name("body") == self.children[2].node
         self.loop_body = self.children[2]
 
-    def simulate_data_flow(self, variable_table: VariableTable):
+    def simulate_data_flow(self, variable_table: VariableTable, mode):
         while_table = variable_table.add_variable_table()
 
-        self.condition_clause.simulate_data_flow(while_table)
-        self.loop_body.simulate_data_flow(while_table)
-        self.condition_clause.simulate_data_flow(while_table)
-        self.loop_body.simulate_data_flow(while_table)
+        self.condition_clause.simulate_data_flow(while_table, mode=mode)
+        self.loop_body.simulate_data_flow(while_table, mode=mode)
+        self.condition_clause.simulate_data_flow(while_table, mode=mode)
+        self.loop_body.simulate_data_flow(while_table, mode=mode)
 
         while_table.pop_self()
 
@@ -421,13 +449,13 @@ class DoStatement(Node):
         self.body = self.children[1]
         self.condition = self.children[3]
 
-    def simulate_data_flow(self, variable_table: VariableTable):
+    def simulate_data_flow(self, variable_table: VariableTable, mode):
         do_table = variable_table.add_variable_table()
 
-        self.body.simulate_data_flow(do_table)
-        self.condition.simulate_data_flow(do_table)
-        self.body.simulate_data_flow(do_table)
-        self.condition.simulate_data_flow(do_table)
+        self.body.simulate_data_flow(do_table, mode=mode)
+        self.condition.simulate_data_flow(do_table, mode=mode)
+        self.body.simulate_data_flow(do_table, mode=mode)
+        self.condition.simulate_data_flow(do_table, mode=mode)
 
         do_table.pop_self()
 
@@ -474,18 +502,18 @@ class FuncDefinition(Node):
                     self.body = child
                     break
 
-    def simulate_data_flow(self, variable_table: VariableTable):
+    def simulate_data_flow(self, variable_table: VariableTable, mode):
         func_table = variable_table.add_variable_table()
 
         parameters = self.parameter_list.get_named_leaf()
         for parameter in parameters:
             if parameter.type == "identifier":
                 token = parameter.token
-                unit = func_table.add_reference(token)
+                unit = func_table.add_reference(parameter.token, parameter)
                 unit["lr"].add(parameter)
                 unit["lw"].add(parameter)
 
         if self.body is not None:
-            self.body.simulate_data_flow(func_table)
+            self.body.simulate_data_flow(func_table, mode=mode)
 
         func_table.pop_self()
