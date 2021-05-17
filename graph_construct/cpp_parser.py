@@ -8,7 +8,7 @@ ATOM_TYPES = ("init_declarator", "array_declarator", "parameter_declaration", "f
               "return_statement", "condition_clause", "argument_list", "parameter_list", "initializer_list",
               "initializer_pair", "translation_unit",
               "comma_expression", "assignment_expression", "binary_expression", "call_expression", "update_expression",
-              "subscript_expression", "conditional_expression", "identifier")
+              "subscript_expression", "conditional_expression", "pointer_expression", "identifier")
 
 
 COMPARE = (">", ">=", "<", "<=", "==")
@@ -99,10 +99,6 @@ class Node:
                 leaves += child.get_named_leaf()
             return leaves
 
-    @abc.abstractmethod
-    def simulate_data_flow(self, variable_table: VariableTable, mode):
-        pass
-
 
 class NormalNode(Node):
     def __init__(self, node: tree_sitter.Node, code: List, father=None):
@@ -118,7 +114,7 @@ class NormalNode(Node):
 
             elif self.type == "translation_unit":
                 for child in self.named_children:
-                    child.simulate_data_flow(variable_table, "o")  # "d" is the default status
+                    child.simulate_data_flow(variable_table, "o")  # "o" is the default status
 
             elif self.type == "declaration":  # Done
                 for child in self.named_children:
@@ -166,10 +162,12 @@ class NormalNode(Node):
 
             elif self.type == "expression_statement":  # Done
                 if mode == "o":
-                    declare_expression = ("identifier", "subscript_expression", "comma_expression")  # comma may error
+                    declare_expression = ("identifier", "subscript_expression")  # comma may error
                     for expression in self.named_children:
                         if expression.type in declare_expression:
                             expression.simulate_data_flow(variable_table, "d")
+                        elif expression.type == "comma_expression":
+                            expression.simulate_data_flow(variable_table, "o")
                         else:
                             expression.simulate_data_flow(variable_table, "r")
                 elif mode == "r":
@@ -184,10 +182,12 @@ class NormalNode(Node):
                         expression.simulate_data_flow(variable_table, "r")
 
                 elif mode == "o":
-                    declare_expression = ("identifier", "subscript_expression", "comma_expression")
+                    declare_expression = ("identifier", "subscript_expression")
                     for expression in self.named_children:
                         if expression.type in declare_expression:
                             expression.simulate_data_flow(variable_table, "d")
+                        elif expression.type == "comma_expression":
+                            expression.simulate_data_flow(variable_table, "o")
                         else:
                             expression.simulate_data_flow(variable_table, "r")
                 else:
@@ -249,7 +249,8 @@ class NormalNode(Node):
                 elif mode == "w":
                     name.simulate_data_flow(variable_table, "w")
                 else:
-                    raise ValueError(f"Subscript expression {self.token} does not support declaration")
+                    name.simulate_data_flow(variable_table, "d")
+                    # raise ValueError(f"Subscript expression {self.token} does not support declaration")
 
             elif self.type == "conditional_expression":  # a ? b : c
                 condition = self.children[0]
@@ -270,6 +271,9 @@ class NormalNode(Node):
                 if_table.child = alternative_table
                 alternative_table.add_variable_table()
                 if_table.pop_self()
+
+            elif self.type == "pointer_expression":
+                self.named_children[1].simulate_data_flow(variable_table, mode)
 
             elif self.type == "identifier":
                 if mode == "r":
