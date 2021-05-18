@@ -1,4 +1,4 @@
-SPECIAL_TOKENS = ("cin", "cout", "endl")
+SPECIAL_TOKENS = ("cin", "cout", "endl", "fixed", "EOF", "stdin", "stdout", "N", "M", "L", "MAX", "MIN", "NUM", "MAXN")
 UPDATE_MODE = {"ro", "wo", "rw"}  # read-only, write-only, read-and-write
 
 
@@ -37,19 +37,22 @@ class VariableTable:
 
     def add_reference(self, token, node):
         assert token == node.token
+        """
         if token in SPECIAL_TOKENS:
             return 1
+        """
         self.local_variables[token] = {"lr": {node}, "lw": {node}}
         return self.local_variables[token]
 
     def find_and_update(self, token: str, node, mode: str):
         assert token == node.token
-        if node.token in SPECIAL_TOKENS:
-            return 1
 
         unit = self.find_reference(token)
         if unit is None:
-            raise ValueError(f"{token} not found")
+            if node.token in SPECIAL_TOKENS:
+                return 1
+            else:
+                raise ValueError(f"{token} not found")
 
         if mode not in UPDATE_MODE:
             raise ValueError(f"{mode} is not an available update mode")
