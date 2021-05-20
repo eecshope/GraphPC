@@ -203,8 +203,16 @@ class NormalNode(Node):
                     for expression in self.named_children:
                         if expression.type in declare_expression:
                             expression.simulate_data_flow(variable_table, "d")
-                        elif expression.type == "comma_expression" or expression.type == "assignment_expression":
-                            expression.simulate_data_flow(variable_table, "o")
+                        elif expression.type == "assignment_expression" or expression.type == "comma_expression":
+                            def find_left_most(node):
+                                if len(node.children) != 0:
+                                    return find_left_most(node.children[0])
+                                else:
+                                    return node.type == "primitive_type" or node.type == "dependent_type"
+                            if find_left_most(self):
+                                expression.simulate_data_flow(variable_table, "d")
+                            else:
+                                expression.simulate_data_flow(variable_table, "o")
                         else:
                             expression.simulate_data_flow(variable_table, "r")
                 elif mode == "r":
@@ -223,10 +231,21 @@ class NormalNode(Node):
                     for expression in self.named_children:
                         if expression.type in declare_expression:
                             expression.simulate_data_flow(variable_table, "d")
-                        elif expression.type == "comma_expression" or expression.type == "assignment_expression":
-                            expression.simulate_data_flow(variable_table, "o")
+                        elif expression.type == "assignment_expression" or expression.type == "comma_expression":
+                            def find_left_most(node):
+                                if len(node.children) != 0:
+                                    return find_left_most(node.children[0])
+                                else:
+                                    return node.type == "primitive_type" or node.type == "dependent_type"
+                            if find_left_most(self):
+                                expression.simulate_data_flow(variable_table, "d")
+                            else:
+                                expression.simulate_data_flow(variable_table, "o")
                         else:
                             expression.simulate_data_flow(variable_table, "r")
+                elif mode == "d":
+                    for expression in self.named_children:
+                        expression.simulate_data_flow(variable_table, "d")
                 else:
                     raise ValueError(f"Comma expression encounter mode {mode}")
 
@@ -235,7 +254,8 @@ class NormalNode(Node):
                 self.children[2].simulate_data_flow(variable_table, "r")  # i = ++i; is undefined and it is not allowed
 
                 variable = self.children[0]
-                support_expression = ("identifier", "subscript_expression", "pointer_expression", "field_expression")
+                support_expression = ("identifier", "subscript_expression", "pointer_expression", "field_expression",
+                                      "call_expression")
 
                 def find_left_most(node):
                     if len(node.children) != 0:
